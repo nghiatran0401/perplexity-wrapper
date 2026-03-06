@@ -6,6 +6,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from .cache import SQLiteCache
 from .errors import PerplexityError
+from .fallback import DuckDuckGoFallback, FallbackProvider
 from .models import AskResult, Source
 
 
@@ -18,6 +19,7 @@ class PerplexityClient:
         timeout_s: float = 20.0,
         base_url: str = "https://api.perplexity.ai",
         cache_db_path: str = ".perplexity_cache.sqlite",
+        fallback_provider: FallbackProvider | None = None,
     ):
         self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
         if not self.api_key:
@@ -26,6 +28,7 @@ class PerplexityClient:
         self.timeout_s = timeout_s
         self.base_url = base_url.rstrip("/")
         self.cache = SQLiteCache(cache_db_path)
+        self.fallback_provider = fallback_provider or DuckDuckGoFallback(timeout_s=min(timeout_s, 10.0))
 
     @retry(
         stop=stop_after_attempt(3),
@@ -52,7 +55,13 @@ class PerplexityClient:
 
         return response.json()
 
-    def ask(self, query: str, model: str = "sonar-pro", cache_ttl_s: int = 300) -> AskResult:
+    def ask(
+        self,
+        query: str,
+        model: str = "sonar-pro",
+        cache_ttl_s: int = 300,
+        enable_fallback: bool = True,
+    ) -> AskResult:
         if not query.strip():
             raise ValueError("query must not be empty")
 
@@ -77,30 +86,37 @@ class PerplexityClient:
 
         try:
             data = self._request(payload, headers)
+
+            answer = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            citations = data.get("citations", []) or []
+            sources = [
+                Source(url=url)
+                for url in citations
+                if isinstance(url, str) and url.startswith(("http://", "https://"))
+            ]
+
+            confidence = 0.8 if len(sources) >= 2 else (0.6 if len(sources) == 1 else 0.4)
+
+            if not answer:
+                raise PerplexityError(
+                    message="Empty answer from Perplexity",
+                    retryable=False,
+                    reason="no_content",
+                )
+
+            result = AskResult(answer=answer, sources=sources, confidence=confidence, raw=data)
+            self.cache.set(query, model, result)
+            return result
+
         except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if enable_fallback and self.fallback_provider is not None:
+                return self.fallback_provider.answer(query)
             raise PerplexityError(
                 message="Network error calling Perplexity",
                 retryable=True,
                 reason=str(exc),
             ) from exc
-
-        answer = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        citations = data.get("citations", []) or []
-        sources = [
-            Source(url=url)
-            for url in citations
-            if isinstance(url, str) and url.startswith(("http://", "https://"))
-        ]
-
-        confidence = 0.8 if len(sources) >= 2 else (0.6 if len(sources) == 1 else 0.4)
-
-        if not answer:
-            raise PerplexityError(
-                message="Empty answer from Perplexity",
-                retryable=False,
-                reason="no_content",
-            )
-
-        result = AskResult(answer=answer, sources=sources, confidence=confidence, raw=data)
-        self.cache.set(query, model, result)
-        return result
+        except PerplexityError:
+            if enable_fallback and self.fallback_provider is not None:
+                return self.fallback_provider.answer(query)
+            raise

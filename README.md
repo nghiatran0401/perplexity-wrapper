@@ -7,6 +7,7 @@ A small, resilient wrapper around Perplexity Chat Completions.
 - Returns typed output (`answer`, `sources`, `confidence`)
 - Handles retry/timeout for transient network failures
 - Adds SQLite cache to reduce cost/latency
+- Includes DuckDuckGo fallback when Perplexity is unavailable
 
 ## Setup
 ```bash
@@ -22,6 +23,8 @@ pytest -q
 python -m perplexity_wrapper "Latest updates in Llama ecosystem?"
 python -m perplexity_wrapper "What is RAG?" --model sonar-pro --cache-ttl 600
 ```
+
+If Perplexity fails, the client can fallback to DuckDuckGo by default.
 
 ## Library usage
 ```python

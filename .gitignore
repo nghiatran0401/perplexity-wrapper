@@ -5,3 +5,4 @@ __pycache__/
 *.pyd
 .venv/
 .pytest_cache/
+.perplexity_cache.sqlite
