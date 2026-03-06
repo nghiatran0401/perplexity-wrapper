@@ -6,10 +6,10 @@ A small, resilient wrapper around Perplexity Chat Completions.
 - Keeps your app code stable behind one adapter (`PerplexityClient`)
 - Returns typed output (`answer`, `sources`, `confidence`)
 - Handles retry/timeout for transient network failures
+- Adds SQLite cache to reduce cost/latency
 
 ## Setup
 ```bash
-cd projects/perplexity_wrapper
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -17,16 +17,26 @@ export PERPLEXITY_API_KEY=your_key_here
 pytest -q
 ```
 
-## Usage
+## CLI usage
+```bash
+python -m perplexity_wrapper "Latest updates in Llama ecosystem?"
+python -m perplexity_wrapper "What is RAG?" --model sonar-pro --cache-ttl 600
+```
+
+## Library usage
 ```python
 from perplexity_wrapper.client import PerplexityClient
+from perplexity_wrapper.errors import PerplexityError
 
 client = PerplexityClient()
-result = client.ask("Latest updates in Llama ecosystem?")
 
-print(result.answer)
-print([str(s.url) for s in result.sources])
-print(result.confidence)
+try:
+    result = client.ask("Latest updates in Llama ecosystem?", cache_ttl_s=600)
+    print(result.answer)
+    print([str(s.url) for s in result.sources])
+    print(result.confidence)
+except PerplexityError as err:
+    print(err.retryable, err.status_code, err.reason)
 ```
 
 ## Notes
